@@ -27,6 +27,7 @@
     "mongoose": "^8.9.5",
     "plivo": "^4.78.0",
     "socket.io": "^4.8.3",
+    "twilio": "^6.0.2",
     "winston": "^3.2.1"
   },
   "devDependencies": {
