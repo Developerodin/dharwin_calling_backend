@@ -1,0 +1,35 @@
+{
+  "name": "dharwinone-calling-backend",
+  "version": "1.0.0",
+  "description": "DharwinOne Plivo voice calling and contact management service",
+  "main": "src/index.js",
+  "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "cross-env NODE_ENV=development nodemon src/index.js",
+    "test": "node --test ./src/services/__tests__/plivo.service.test.js ./src/services/__tests__/call.service.test.js ./src/services/__tests__/callSync.service.test.js ./src/models/__tests__/call.model.test.js ./src/socket/__tests__/callBroadcast.test.js",
+    "migrate:indexes": "node scripts/migrations/2026-06-15-ensure-indexes.js"
+  },
+  "dependencies": {
+    "compression": "^1.7.4",
+    "cors": "^2.8.5",
+    "cross-env": "^7.0.3",
+    "dotenv": "^10.0.0",
+    "express": "^4.17.1",
+    "express-mongo-sanitize": "^2.0.0",
+    "helmet": "^7.1.0",
+    "http-status": "^1.4.0",
+    "joi": "^17.3.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.9.5",
+    "plivo": "^4.78.0",
+    "socket.io": "^4.8.3",
+    "winston": "^3.2.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  }
+}
