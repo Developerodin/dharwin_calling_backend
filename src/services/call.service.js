@@ -1013,7 +1013,12 @@ async function setCallRecording(userId, id, recording, isAdmin) {
 
 async function getCallById(userId, id, isAdmin) {
   const filter = buildUserFilter(userId, isAdmin);
-  const record = await Call.findOne({ ...filter, $or: [{ _id: id }, { callSid: id }] }).populate(
+  // Only match by _id when the param is a valid ObjectId — otherwise Mongoose
+  // throws "Cast to ObjectId failed" before it can try the callSid branch (the
+  // app may look up by a Twilio CallSid "CA…" or a transient "pending_…" id).
+  const or = [{ callSid: id }];
+  if (/^[a-f0-9]{24}$/i.test(String(id))) or.unshift({ _id: id });
+  const record = await Call.findOne({ ...filter, $or: or }).populate(
     'contact',
     'name phone secondaryPhone'
   );
