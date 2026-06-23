@@ -15,6 +15,8 @@
  * alongside it behind CALLING_PROVIDER until cutover.
  */
 
+import https from 'https';
+import http from 'http';
 import twilio from 'twilio';
 import config from '../config/config.js';
 import logger from '../config/logger.js';
@@ -418,6 +420,193 @@ function buildRecordingMediaUrl(recordingUrl) {
   return url.endsWith('.mp3') || url.endsWith('.wav') ? url : `${url}.mp3`;
 }
 
+/**
+ * Stream a Twilio recording's media bytes to an Express response.
+ *
+ * Twilio's recording media endpoint (api.twilio.com/.../Recordings/RE….mp3)
+ * requires HTTP Basic Auth (Account SID + Auth Token). Opening that URL directly
+ * in a browser yields a 401 + login prompt — which is what the app's
+ * `Linking.openURL(recordingUrl)` was hitting. This proxies the request with the
+ * account credentials so an already-authenticated app user can play the audio,
+ * forwarding Range headers so the in-app player can seek.
+ *
+ * @param {string} recordingUrl - the stored Twilio media URL
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ */
+function proxyRecordingMedia(recordingUrl, req, res) {
+  const { accountSid, authToken } = getConfig();
+  if (!recordingUrl) {
+    res.status(404).json({ success: false, message: 'No recording available.' });
+    return Promise.resolve();
+  }
+  if (!accountSid || !authToken) {
+    res.status(503).json({ success: false, message: 'Twilio credentials not configured.' });
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    let target;
+    try {
+      target = new URL(String(recordingUrl));
+    } catch {
+      res.status(400).json({ success: false, message: 'Invalid recording URL.' });
+      return resolve();
+    }
+
+    const transport = target.protocol === 'http:' ? http : https;
+    const authHeader = `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`;
+    const headers = { Authorization: authHeader };
+    if (req.headers.range) headers.Range = req.headers.range;
+
+    const upstream = transport.request(
+      target,
+      { method: 'GET', headers },
+      (up) => {
+        res.status(up.statusCode || 200);
+        for (const name of ['content-type', 'content-length', 'accept-ranges', 'content-range']) {
+          if (up.headers[name]) res.setHeader(name, up.headers[name]);
+        }
+        if (!up.headers['content-type']) res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('Cache-Control', 'private, max-age=3600');
+        up.pipe(res);
+        up.on('end', resolve);
+        up.on('error', () => {
+          if (!res.headersSent) res.status(502).end();
+          resolve();
+        });
+      },
+    );
+
+    upstream.on('error', (err) => {
+      logger.warn(`[Twilio] recording media proxy failed: ${describeError(err)}`);
+      if (!res.headersSent) res.status(502).json({ success: false, message: 'Failed to fetch recording.' });
+      resolve();
+    });
+
+    req.on('close', () => upstream.destroy());
+    upstream.end();
+  });
+}
+
+/* --------------------------------------------------------------------------
+ * Conversational Intelligence (transcripts + AI summary)
+ *
+ * A Transcript is created against the configured Intelligence Service, pointing
+ * at a finished call recording (source_sid = RE…). Twilio transcribes the audio
+ * and runs the Service's attached Operators — including the generative
+ * "Conversation Summary" operator. Results are read back via OperatorResults.
+ * ------------------------------------------------------------------------ */
+
+/** Whether Conversational Intelligence is configured (account creds + service). */
+function isIntelligenceConfigured() {
+  const { accountSid, authToken, intelligenceServiceSid } = getConfig();
+  return Boolean(accountSid && authToken && intelligenceServiceSid);
+}
+
+function intelligenceWebhookUrl() {
+  return buildWebhookUrl('/webhooks/twilio-intelligence');
+}
+
+/**
+ * Create a Transcript for a finished recording.
+ * @param {{ recordingSid: string, callSid?: string }} params
+ */
+async function createTranscript(params = {}) {
+  const { intelligenceServiceSid } = getConfig();
+  if (!intelligenceServiceSid) {
+    return { success: false, error: 'TWILIO_INTELLIGENCE_SERVICE_SID is not configured.' };
+  }
+  const recordingSid = params.recordingSid ? String(params.recordingSid) : '';
+  if (!recordingSid) return { success: false, error: 'recordingSid is required' };
+
+  const createParams = {
+    serviceSid: intelligenceServiceSid,
+    channel: {
+      // Dual-channel recordings map participant_channel 1/2 → the two legs.
+      media_properties: { source_sid: recordingSid },
+    },
+  };
+  // Tie the transcript back to the call so the completion webhook can resolve it
+  // without a Recording→Call lookup.
+  if (params.callSid) createParams.customerKey = String(params.callSid);
+
+  const result = await runTwilio('POST Intelligence Transcripts', (client) =>
+    client.intelligence.v2.transcripts.create(createParams),
+  );
+  if (!result.success) return result;
+  return { success: true, sid: result.data?.sid, status: result.data?.status, data: result.data };
+}
+
+/** Fetch a Transcript resource (status lives here). */
+async function fetchTranscript(transcriptSid) {
+  if (!transcriptSid) return { success: false, error: 'transcriptSid is required' };
+  return runTwilio(`GET Intelligence Transcripts/${transcriptSid}`, (client) =>
+    client.intelligence.v2.transcripts(String(transcriptSid)).fetch(),
+  );
+}
+
+/** Pull the summary text out of a generative operator result, shape-tolerant. */
+function extractSummaryText(operatorResults = []) {
+  for (const op of operatorResults) {
+    const gen = op?.textGenerationResults ?? op?.text_generation_results;
+    if (!gen) continue;
+    const text =
+      (typeof gen === 'string' && gen) ||
+      gen.result ||
+      gen.text ||
+      gen.summary ||
+      (Array.isArray(gen.results) ? gen.results.join('\n') : '');
+    if (text && String(text).trim()) return String(text).trim();
+  }
+  return '';
+}
+
+/**
+ * Rebuild a readable transcript from the per-sentence results.
+ * @param {Array<{ mediaChannel?: number, transcript?: string }>} sentences
+ */
+function buildTranscriptText(sentences = []) {
+  return sentences
+    .map((s) => {
+      const speaker = s.mediaChannel === 2 ? 'B' : 'A';
+      const text = (s.transcript || '').trim();
+      return text ? `${speaker}: ${text}` : '';
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
+/**
+ * Fetch the finished results for a transcript: status, AI summary, and the
+ * reconstructed transcript text. Only reads operator/sentence sub-resources
+ * once the transcript has reached `completed`.
+ * @param {string} transcriptSid
+ */
+async function fetchTranscriptResults(transcriptSid) {
+  const head = await fetchTranscript(transcriptSid);
+  if (!head.success) return head;
+
+  const status = head.data?.status || 'unknown';
+  if (status !== 'completed') {
+    return { success: true, status, summary: '', transcript: '', pending: status !== 'failed' };
+  }
+
+  const [opResult, sentenceResult] = await Promise.all([
+    runTwilio(`GET Intelligence Transcripts/${transcriptSid}/OperatorResults`, (client) =>
+      client.intelligence.v2.transcripts(String(transcriptSid)).operatorResults.list({ limit: 50 }),
+    ),
+    runTwilio(`GET Intelligence Transcripts/${transcriptSid}/Sentences`, (client) =>
+      client.intelligence.v2.transcripts(String(transcriptSid)).sentences.list({ limit: 1000 }),
+    ),
+  ]);
+
+  const summary = opResult.success ? extractSummaryText(opResult.data || []) : '';
+  const transcript = sentenceResult.success ? buildTranscriptText(sentenceResult.data || []) : '';
+
+  return { success: true, status, summary, transcript, pending: false };
+}
+
 /* --------------------------------------------------------------------------
  * Webhook signature validation
  * ------------------------------------------------------------------------ */
@@ -465,6 +654,12 @@ export default {
   endCall,
   setRecording,
   buildRecordingMediaUrl,
+  proxyRecordingMedia,
+  isIntelligenceConfigured,
+  intelligenceWebhookUrl,
+  createTranscript,
+  fetchTranscript,
+  fetchTranscriptResults,
   shouldVerifyWebhooks,
   validateSignature,
   statusCallbackUrl,

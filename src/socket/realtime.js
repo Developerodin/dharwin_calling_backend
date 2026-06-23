@@ -22,6 +22,8 @@ export const CALL_EVENTS = {
   statusUpdated: 'call-status-updated',
   /** Recording URL is available for a call. */
   recordingReady: 'recording-ready',
+  /** AI summary + transcript are available for a call. */
+  summaryReady: 'call-summary-ready',
   /** Call history list should refresh or patch an entry. */
   historyUpdated: 'call-history-updated',
   /** Incoming Browser SDK phone call for a registered app user. */

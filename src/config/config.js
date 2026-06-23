@@ -35,6 +35,10 @@ const envVarsSchema = Joi.object()
     TWILIO_WEBHOOK_BASE_URL: Joi.string().optional().allow(''),
     TWILIO_INBOUND_DEFAULT_USER: Joi.string().optional().allow(''),
     TWILIO_VERIFY_WEBHOOKS: Joi.string().valid('true', 'false').optional(),
+    // Twilio Conversational Intelligence (call transcription + AI summary).
+    // GA… Service SID created in the Twilio Console. Optional — summaries are
+    // simply disabled when unset.
+    TWILIO_INTELLIGENCE_SERVICE_SID: Joi.string().optional().allow(''),
     CALLING_PROVIDER: Joi.string().valid('plivo', 'twilio').optional().default('plivo'),
   })
   .unknown();
@@ -85,6 +89,7 @@ const config = {
       envVars.TWILIO_WEBHOOK_BASE_URL || envVars.BACKEND_PUBLIC_URL || '',
     ).trim(),
     inboundDefaultUser: String(envVars.TWILIO_INBOUND_DEFAULT_USER || '').trim(),
+    intelligenceServiceSid: String(envVars.TWILIO_INTELLIGENCE_SERVICE_SID || '').trim(),
     verifyWebhooks:
       envVars.TWILIO_VERIFY_WEBHOOKS === 'true'
         ? true

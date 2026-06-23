@@ -13,6 +13,7 @@ import httpStatus from 'http-status';
 import catchAsync from '../utils/catchAsync.js';
 import twilioService from '../services/twilio.service.js';
 import twilioCallSync from '../services/twilioCallSync.service.js';
+import twilioIntelligence from '../services/twilioIntelligence.service.js';
 import numberService from '../services/twilioNumber.service.js';
 import callEventLog from '../utils/callEventLog.js';
 
@@ -100,4 +101,10 @@ const recordingWebhook = catchAsync(async (req, res) => {
   return res.status(httpStatus.OK).json({ success: true });
 });
 
-export { outboundVoice, inboundVoice, callStatusWebhook, recordingWebhook };
+/** POST /webhooks/twilio-intelligence — Conversational Intelligence transcript callback. */
+const intelligenceWebhook = catchAsync(async (req, res) => {
+  await twilioIntelligence.handleIntelligenceWebhook(req.body || {});
+  return res.status(httpStatus.OK).json({ success: true });
+});
+
+export { outboundVoice, inboundVoice, callStatusWebhook, recordingWebhook, intelligenceWebhook };

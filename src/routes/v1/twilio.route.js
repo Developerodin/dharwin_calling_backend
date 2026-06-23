@@ -22,6 +22,9 @@ router
 router
   .route('/webhooks/twilio-recording')
   .post(verifyTwilioWebhook, twilioVoiceController.recordingWebhook);
+router
+  .route('/webhooks/twilio-intelligence')
+  .post(verifyTwilioWebhook, twilioVoiceController.intelligenceWebhook);
 
 /* ---- Authenticated app endpoints ---- */
 

@@ -48,6 +48,18 @@ const callSchema = new mongoose.Schema(
     recordingUrl: { type: String, default: null },
     recordingDuration: { type: Number, default: null },
     recordingSid: { type: String, default: null, index: true },
+    // Conversational Intelligence (AI call summary + transcript).
+    transcriptSid: { type: String, default: null, index: true },
+    summary: { type: String, default: null },
+    transcript: { type: String, default: null },
+    // pending → transcript created, awaiting results; ready → summary stored;
+    // failed → Twilio could not transcribe; unavailable → not attempted.
+    summaryStatus: {
+      type: String,
+      enum: ['unavailable', 'pending', 'ready', 'failed'],
+      default: 'unavailable',
+      index: true,
+    },
     errorMessage: { type: String, default: null },
     providerResponse: { type: mongoose.Schema.Types.Mixed, default: {} },
     twilioResponse: { type: mongoose.Schema.Types.Mixed, default: undefined },

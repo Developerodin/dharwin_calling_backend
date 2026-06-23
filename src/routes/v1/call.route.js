@@ -62,6 +62,24 @@ router
   .get(auth(), requirePermissions('calls.read'), validate(callValidation.getCallStatus), callController.getCallStatus);
 
 router
+  .route('/calls/:id/recording/media')
+  .get(
+    auth(),
+    requirePermissions('calls.read'),
+    validate(callValidation.getCallDetails),
+    callController.streamCallRecording
+  );
+
+router
+  .route('/calls/:id/summary')
+  .get(
+    auth(),
+    requirePermissions('calls.read'),
+    validate(callValidation.getCallDetails),
+    callController.getCallSummary
+  );
+
+router
   .route('/calls/:id/mute')
   .post(auth(), requirePermissions('calls.manage'), validate(callValidation.setMute), callController.setMute);
 

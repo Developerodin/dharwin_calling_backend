@@ -6,6 +6,8 @@ import callService from '../services/call.service.js';
 import callSyncService from '../services/callSync.service.js';
 import endpointService from '../services/endpoint.service.js';
 import plivoService from '../services/plivo.service.js';
+import twilioService from '../services/twilio.service.js';
+import twilioIntelligence from '../services/twilioIntelligence.service.js';
 import callEventLog from '../utils/callEventLog.js';
 import { userIsAdmin } from '../utils/authHelpers.js';
 
@@ -206,6 +208,63 @@ const getRecording = catchAsync(async (req, res) => {
   const isAdmin = await userIsAdmin(req.user || {});
   const recording = await callService.getRecordingById(getUserId(req), req.params.id, isAdmin);
   res.status(httpStatus.OK).send({ success: true, recording });
+});
+
+/**
+ * Stream a call's recording audio through the backend so the app can play it
+ * in-app without hitting Twilio's Basic-Auth login prompt. Authorized by the
+ * caller's own JWT; the Twilio account credentials never leave the server.
+ */
+const streamCallRecording = catchAsync(async (req, res) => {
+  const isAdmin = await userIsAdmin(req.user || {});
+  const call = await callService.getCallById(getUserId(req), req.params.id, isAdmin);
+  const recordingUrl = call?.recordingUrl;
+  if (!recordingUrl) {
+    return res.status(httpStatus.NOT_FOUND).send({
+      success: false,
+      message: 'No recording available for this call.',
+    });
+  }
+  return twilioService.proxyRecordingMedia(recordingUrl, req, res);
+});
+
+/**
+ * Fetch (or generate) the AI summary + transcript for a call. Returns the
+ * current state immediately when ready; otherwise creates the Conversational
+ * Intelligence transcript and polls briefly. While still processing it returns
+ * `summaryStatus: 'pending'` — the app also receives `call-summary-ready` over
+ * the socket once Twilio finishes.
+ */
+const getCallSummary = catchAsync(async (req, res) => {
+  const isAdmin = await userIsAdmin(req.user || {});
+  const call = await callService.getCallById(getUserId(req), req.params.id, isAdmin);
+
+  if (!call.recordingSid) {
+    return res.status(httpStatus.OK).send({
+      success: true,
+      summaryStatus: 'unavailable',
+      summary: null,
+      transcript: null,
+      message: 'No recording is available to summarize for this call.',
+    });
+  }
+  if (!twilioService.isIntelligenceConfigured()) {
+    return res.status(httpStatus.SERVICE_UNAVAILABLE).send({
+      success: false,
+      summaryStatus: 'unavailable',
+      message: 'Conversational Intelligence is not configured on the server.',
+    });
+  }
+
+  await twilioIntelligence.ensureSummary(call);
+
+  res.status(httpStatus.OK).send({
+    success: true,
+    summaryStatus: call.summaryStatus,
+    summary: call.summary ?? null,
+    transcript: call.transcript ?? null,
+    transcriptSid: call.transcriptSid ?? null,
+  });
 });
 
 const listReports = catchAsync(async (req, res) => {
@@ -605,6 +664,8 @@ export {
   listCallHistory,
   listRecordings,
   getRecording,
+  streamCallRecording,
+  getCallSummary,
   listReports,
   exportReports,
   outboundAnswerXml,

@@ -45,6 +45,10 @@ export function serializeCall(record) {
     recordingDuration:
       typeof json.recordingDuration === 'number' ? json.recordingDuration : undefined,
     recordingSid: json.recordingSid ?? undefined,
+    transcriptSid: json.transcriptSid ?? undefined,
+    summary: json.summary ?? undefined,
+    transcript: json.transcript ?? undefined,
+    summaryStatus: json.summaryStatus ?? undefined,
     errorMessage: json.errorMessage ?? undefined,
     contact: contact ?? undefined,
     createdAt: record.createdAt ? new Date(record.createdAt).toISOString() : undefined,
@@ -194,6 +198,47 @@ export async function broadcastRecordingReady(record) {
 }
 
 /**
+ * Notify subscribers that an AI summary + transcript are ready for a call.
+ * @param {import('mongoose').Document} record
+ */
+export async function broadcastSummaryReady(record) {
+  try {
+    if (!record?.callSid) return;
+
+    const userId = record.user ? String(record.user) : null;
+    const callUuid = String(record.callSid);
+    const snapshot = serializeCall(record);
+    if (!snapshot) return;
+
+    const payload = {
+      callUUID: callUuid,
+      callId: snapshot.id,
+      summary: snapshot.summary ?? null,
+      transcript: snapshot.transcript ?? null,
+      summaryStatus: snapshot.summaryStatus ?? null,
+      updatedAt: new Date().toISOString(),
+      ...snapshot,
+    };
+
+    logger.info('[Socket] broadcasting call-summary-ready', {
+      callUUID: callUuid,
+      summaryStatus: payload.summaryStatus,
+      userId,
+    });
+
+    const emissions = [
+      emitToCallRoom(callUuid, CALL_EVENTS.summaryReady, payload),
+      emitToUser(userId, CALL_EVENTS.summaryReady, payload),
+      broadcastCallUpdate(record),
+    ];
+
+    await Promise.all(emissions);
+  } catch (error) {
+    logger.warn(`[Socket] broadcastSummaryReady failed: ${error.message}`);
+  }
+}
+
+/**
  * Notify a registered app user that an incoming Browser SDK call is ringing.
  * @param {string} userId
  * @param {Record<string, unknown>} payload
@@ -209,5 +254,6 @@ export default {
   buildHistoryPayload,
   broadcastCallUpdate,
   broadcastRecordingReady,
+  broadcastSummaryReady,
   emitIncomingPhoneCall,
 };

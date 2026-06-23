@@ -10,6 +10,7 @@ import Call, { rankOf, isTerminal } from '../models/call.model.js';
 import CallRecording from '../models/callRecording.model.js';
 import CallReport from '../models/callReport.model.js';
 import twilioService from './twilio.service.js';
+import twilioIntelligence from './twilioIntelligence.service.js';
 import savedContactService from './savedContact.service.js';
 import callEventLog from '../utils/callEventLog.js';
 import { broadcastCallUpdate, broadcastRecordingReady } from '../socket/callBroadcast.js';
@@ -121,6 +122,10 @@ async function generateCallReport(call) {
       callStatus: call.status || 'unknown',
       recordingUrl: call.recordingUrl || null,
       recordingDuration: call.recordingDuration ?? null,
+      transcriptSid: call.transcriptSid || null,
+      summary: call.summary || null,
+      transcript: call.transcript || null,
+      summaryStatus: call.summaryStatus || 'unavailable',
       callStartTime: call.callStartTime || call.createdAt,
       callEndTime: call.callEndTime || null,
       generatedAt: new Date(),
@@ -262,6 +267,19 @@ async function applyRecordingWebhook(payload) {
 
   if (isTerminal(call.status) && !call.reportGenerated) {
     await generateCallReport(call);
+  }
+
+  // Kick off Conversational Intelligence (AI summary + transcript) for the
+  // finished recording. Fire-and-forget: failures here must not fail the
+  // recording webhook, and results arrive later via the intelligence webhook.
+  if (status === 'completed') {
+    twilioIntelligence.requestSummary(call).catch((err) => {
+      callEventLog.warn('twilio.intelligence.request_failed', {
+        callSid,
+        recordingSid,
+        error: err?.message,
+      });
+    });
   }
 
   return call;
